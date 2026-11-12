@@ -134,6 +134,7 @@ public struct ClaudeQuotaService: Sendable {
             let authentication = try cli.authentication(home: config.home)
             state.email = authentication.email
             state.planType = authentication.subscriptionType
+            state.loginExpiresAt = authentication.loginExpiresAt
             guard authentication.supportsQuota else { throw ClaudeQuotaError.unsupportedAccount }
             guard let snapshot = try ClaudeQuotaSnapshot.read(home: config.home), snapshot.identity == authentication.identity else {
                 state.errorMessage = "Claude - Usage not queried"

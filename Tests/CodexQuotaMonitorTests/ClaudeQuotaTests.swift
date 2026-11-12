@@ -8,6 +8,26 @@ import XCTest
 
 /// 수집기와 실제 파일·프로세스 경계의 검증
 final class ClaudeQuotaTests: XCTestCase {
+    /// 공식 ISO 만료일·구버전 누락·손상 값 및 제공자별 경고 범위 검증
+    func testLoginExpirationIsOptionalAndProviderScoped() throws {
+        for text in ["2030-01-01T00:00:00Z", "2030-01-01T00:00:00.123Z", "invalid"] {
+            let data = try JSONSerialization.data(withJSONObject: ["loggedIn": true, "loginExpiresAt": text])
+            let auth = try JSONDecoder().decode(ClaudeAuthentication.self, from: data)
+            XCTAssertEqual(auth.loginExpiresAt != nil, text != "invalid")
+        }
+        XCTAssertNil(try JSONDecoder().decode(ClaudeAuthentication.self, from: Data("{\"loggedIn\":true}".utf8)).loginExpiresAt)
+        let now = Date()
+        var state = AccountState(id: "C1", status: .normal, provider: .claude)
+        state.loginExpiresAt = now.addingTimeInterval(86400)
+        XCTAssertNotNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.loginExpiresAt = now.addingTimeInterval(11 * 86400)
+        XCTAssertNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.loginExpiresAt = now.addingTimeInterval(-1)
+        XCTAssertNotNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.provider = .codex
+        XCTAssertNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+    }
+
     /// JSON 모양의 실패 출력·로그아웃 응답과 정상 종료 구분 검증
     func testCLIRejectsNonzeroExitEvenWithJSON() throws {
         let (home, cli) = try fixture()

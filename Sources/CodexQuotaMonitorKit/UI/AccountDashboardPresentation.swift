@@ -142,6 +142,15 @@ public enum AccountDashboardFormatting {
         return "\(numberText(Int64(min(minutes, Double(Int32.max)))))분 할당량"
     }
 
+    /// 10일 이내 만료되는 Claude 로그인에 대한 재로그인 안내
+    public static func loginExpirationNotice(for account: AccountState, now: Date = Date()) -> String? {
+        guard account.provider == .claude, let expiration = account.loginExpiresAt,
+              expiration.timeIntervalSince1970.isFinite,
+              expiration.timeIntervalSince(now) <= 10 * 86400 else { return nil }
+        guard expiration > now else { return "로그인이 만료되었습니다. 다시 로그인해 주세요." }
+        return "로그인 만료 예정: \(dateText(expiration)) · 만료 전에 다시 로그인해 주세요."
+    }
+
     /// 서버 구독 코드의 한글 뱃지 표시명 변환 및 미확인 값 처리
     public static func subscriptionBadgeText(_ planType: String?) -> String {
         guard let planType else { return "—" }

@@ -36,6 +36,26 @@ public struct ClaudeAuthentication: Decodable, Sendable {
     public let email: String?
     public let orgId: String?
     public let subscriptionType: String?
+    public let loginExpiresAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case loggedIn, authMethod, email, orgId, subscriptionType, loginExpiresAt
+    }
+
+    /// 구버전 누락·잘못된 만료일을 허용하는 공식 인증 응답 복원
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        loggedIn = try values.decode(Bool.self, forKey: .loggedIn)
+        authMethod = try values.decodeIfPresent(String.self, forKey: .authMethod)
+        email = try values.decodeIfPresent(String.self, forKey: .email)
+        orgId = try values.decodeIfPresent(String.self, forKey: .orgId)
+        subscriptionType = try values.decodeIfPresent(String.self, forKey: .subscriptionType)
+        if let text = try? values.decode(String.self, forKey: .loginExpiresAt) {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            loginExpiresAt = formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+        } else { loginExpiresAt = nil }
+    }
 
     public var identity: String {
         let value = [email ?? "", orgId ?? "", authMethod ?? ""].joined(separator: "\n")
@@ -102,6 +122,7 @@ public struct ClaudeCLI: Sendable {
         let data = try run(arguments: ["auth", "status"], home: home, limit: timeout)
         guard let authentication = try? JSONDecoder().decode(ClaudeAuthentication.self, from: data) else { throw ClaudeQuotaError.invalidData }
         guard authentication.loggedIn, authentication.email?.isEmpty == false else { throw ClaudeQuotaError.loginRequired }
+        if let expiration = authentication.loginExpiresAt, expiration <= Date() { throw ClaudeQuotaError.loginRequired }
         return authentication
     }
 

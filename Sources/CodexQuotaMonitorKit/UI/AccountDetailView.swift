@@ -178,6 +178,10 @@ public struct AccountDetailView: View {
                         ResetCreditsBadge(account: displayedAccount, consume: consumeResetCredit).fixedSize()
                     }
                 }
+                if let expirationNotice = AccountDashboardFormatting.loginExpirationNotice(for: account) {
+                    Text(expirationNotice).font(.caption2).foregroundStyle(.orange)
+                        .lineLimit(2).help(expirationNotice)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 

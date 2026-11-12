@@ -24,6 +24,8 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
     public var resetCredits: RateLimitResetCredits?
     public var email: String?
     public var planType: String?
+    /// 공식 Claude 인증 응답의 선택적 로그인 만료 시각
+    public var loginExpiresAt: Date?
     /// 사용률·초기화 시각과 독립적인 서버 제한 관측
     public var codexUsageAccess: CodexUsageAccess?
     public var primaryResetAt: Date?
@@ -180,7 +182,7 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, email, planType, resetCredits, provider, codexUsageAccess
+        case id, email, planType, resetCredits, provider, codexUsageAccess, loginExpiresAt
         case primaryUsedPercent, secondaryUsedPercent
         case primaryRemainingPercent, secondaryRemainingPercent
         case primaryResetAt, secondaryResetAt, primaryWindowMinutes, secondaryWindowMinutes
@@ -212,6 +214,7 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
             provider: try container.decodeIfPresent(AccountProvider.self, forKey: .provider) ?? .codex
         )
         codexUsageAccess = try container.decodeIfPresent(CodexUsageAccess.self, forKey: .codexUsageAccess)
+        loginExpiresAt = try container.decodeIfPresent(Date.self, forKey: .loginExpiresAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -222,6 +225,7 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
         try container.encodeIfPresent(email, forKey: .email)
         try container.encodeIfPresent(planType, forKey: .planType)
         try container.encodeIfPresent(codexUsageAccess, forKey: .codexUsageAccess)
+        try container.encodeIfPresent(loginExpiresAt, forKey: .loginExpiresAt)
         try container.encodeIfPresent(primaryUsedPercent, forKey: .primaryUsedPercent)
         try container.encodeIfPresent(secondaryUsedPercent, forKey: .secondaryUsedPercent)
         try container.encodeIfPresent(primaryRemainingPercent, forKey: .primaryRemainingPercent)
