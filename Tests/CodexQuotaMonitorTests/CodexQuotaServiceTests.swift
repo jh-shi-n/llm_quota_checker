@@ -3,6 +3,33 @@ import XCTest
 @testable import CodexQuotaMonitorKit
 
 final class CodexQuotaServiceTests: XCTestCase {
+    /// 실제 시간 구간 파싱·영속화·고정 알림 제외 및 표시 길이 검증
+    func testVariableQuotaWindowsRetainTheirDuration() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("auth.json"))
+        let transport = RecordingTransport(responses: [
+            0: CodexMessage(id: 0, result: .object([:])),
+            1: CodexMessage(id: 1, result: .object([:])),
+            2: CodexMessage(id: 2, result: .object(["rateLimits": .object([
+                "primary": .object(["usedPercent": .number(25), "windowDurationMins": .number(15)]),
+                "secondary": .object(["usedPercent": .number(42), "windowDurationMins": .number(60)])])]))
+        ])
+        let service = CodexQuotaService(locator: FixedCodexLocator(url: directory.appendingPathComponent("codex")),
+            processFactory: { transport })
+        let state = service.stateSync(for: AccountConfig(id: "C1", home: directory, position: .left))
+        XCTAssertEqual(state.status, .normal)
+        XCTAssertEqual(state.primaryWindowMinutes, 15)
+        XCTAssertEqual(state.secondaryWindowMinutes, 60)
+        XCTAssertFalse(state.supportsStandardQuotaWindows)
+        XCTAssertEqual(try JSONDecoder().decode(AccountState.self, from: JSONEncoder().encode(state)).primaryWindowMinutes, 15)
+        XCTAssertNil(AccountDashboardFormatting.fiveHourResetNotice(for: state))
+        XCTAssertEqual(AccountDashboardFormatting.quotaWindowTitle(minutes: 15, primary: true), "15분 할당량")
+        XCTAssertEqual(AccountDashboardFormatting.quotaWindowTitle(minutes: 60, primary: false), "1시간 할당량")
+        XCTAssertEqual(AccountDashboardFormatting.quotaWindowTitle(minutes: 10080, primary: false), "주간 할당량")
+        XCTAssertEqual(AccountDashboardFormatting.quotaWindowTitle(minutes: .infinity, primary: true), "한도 구간 확인 필요")
+    }
+
     /// 사용률·초기화 시각과 독립적인 서버 차단 및 null 응답의 차단 유지 검증
     func testServerUsageRestrictionOverridesRemainingQuota() throws {
         let directory = try makeTemporaryDirectory()

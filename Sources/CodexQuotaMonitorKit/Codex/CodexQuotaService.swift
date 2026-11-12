@@ -48,6 +48,8 @@ extension CodexQuotaServiceError: LocalizedError {
 public struct CodexQuota: Equatable, Sendable {
     public var usageAccess: CodexUsageAccess?
     var hasQuotaWindows = true
+    public var primaryWindowMinutes: Double?
+    public var secondaryWindowMinutes: Double?
     public let resetCredits: RateLimitResetCredits?
     public let email: String?
     public let planType: String?
@@ -357,6 +359,8 @@ public struct CodexQuotaService: Sendable {
                 secondaryResetAt: primaryIsOverall
                     ? quota.secondaryResetAt ?? quota.primaryResetAt
                     : quota.secondaryResetAt,
+                primaryWindowMinutes: primaryIsOverall ? nil : quota.primaryWindowMinutes,
+                secondaryWindowMinutes: quota.secondaryWindowMinutes,
                 resetCredits: quota.resetCredits,
                 lastUpdated: Date(),
                 status: quota.usageAccess?.isBlocked == true ? .error : .normal,
@@ -464,6 +468,8 @@ public struct CodexQuotaService: Sendable {
             secondaryResetAt: secondary.flatMap { resetDate(in: $0.values) },
             resetCredits: RateLimitResetCredits.parse(result["rateLimitResetCredits"])
         )
+        quota.primaryWindowMinutes = primary?.values["windowDurationMins"]?.numberValue
+        quota.secondaryWindowMinutes = secondary?.values["windowDurationMins"]?.numberValue
         quota.usageAccess = access
         return quota
     }
@@ -485,14 +491,14 @@ public struct CodexQuotaService: Sendable {
     ) -> ClassifiedLimit? {
         guard let values else { return nil }
         if let duration = values["windowDurationMins"]?.numberValue {
-            guard duration.isFinite else { return nil }
+            guard duration.isFinite, duration > 0, duration <= Double(Int32.max), duration.rounded() == duration else { return nil }
             if duration == 300 {
                 return ClassifiedLimit(window: .fiveHour, values: values, usesExplicitDuration: true)
             }
             if duration == 10080 {
                 return ClassifiedLimit(window: .overall, values: values, usesExplicitDuration: true)
             }
-            return nil
+            return ClassifiedLimit(window: key == "primary" ? .fiveHour : .overall, values: values, usesExplicitDuration: true)
         }
 
         let window: QuotaWindow = key == "primary" ? .fiveHour : .overall

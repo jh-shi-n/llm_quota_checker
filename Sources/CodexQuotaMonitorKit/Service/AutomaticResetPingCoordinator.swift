@@ -125,7 +125,7 @@ public final class AutomaticResetPingCoordinator {
 
     /// 주간 10% 초과·5시간 잔량 존재·정상 조회만 자동 전송 허용
     static func canSend(_ state: AccountState) -> Bool {
-        state.status == .normal && state.secondaryRemainingPercent.map { $0 > 10 } == true
+        state.supportsStandardQuotaWindows && state.status == .normal && state.secondaryRemainingPercent.map { $0 > 10 } == true
             && state.primaryRemainingPercent.map { $0 > 0 } == true
     }
 

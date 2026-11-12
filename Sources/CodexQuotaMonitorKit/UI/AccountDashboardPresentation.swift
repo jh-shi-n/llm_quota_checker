@@ -125,10 +125,21 @@ public enum AccountDashboardFormatting {
 
     /// 현재 할당량 제목 옆의 5시간 한도 안내; 이동·실패·만료·7일 한도 제외
     public static func fiveHourResetNotice(for account: AccountState, now: Date = Date()) -> String? {
-        guard let reset = observedResetDate(account.primaryResetAt,
+        guard account.primaryWindowMinutes == nil || account.primaryWindowMinutes == 300,
+              let reset = observedResetDate(account.primaryResetAt,
             observation: account.primaryResetObservation, status: account.status, now: now, provider: account.provider) else { return nil }
         let remaining = remainingTimeText(until: reset, now: now)
         return "\(remaining) 뒤 5시간 할당량이 초기화될 예정입니다."
+    }
+
+    /// 서버 구간 길이에 따른 한도 제목과 구버전 기본 제목 반환
+    public static func quotaWindowTitle(minutes: Double?, primary: Bool) -> String {
+        guard let minutes else { return primary ? "5시간 할당량" : "주간 할당량" }
+        guard minutes.isFinite, minutes > 0, minutes <= Double(Int32.max) else { return "한도 구간 확인 필요" }
+        if minutes == 10080 { return "주간 할당량" }
+        if minutes.truncatingRemainder(dividingBy: 1440) == 0 { return "\(numberText(Int64(minutes / 1440)))일 할당량" }
+        if minutes.truncatingRemainder(dividingBy: 60) == 0 { return "\(numberText(Int64(minutes / 60)))시간 할당량" }
+        return "\(numberText(Int64(min(minutes, Double(Int32.max)))))분 할당량"
     }
 
     /// 서버 구독 코드의 한글 뱃지 표시명 변환 및 미확인 값 처리

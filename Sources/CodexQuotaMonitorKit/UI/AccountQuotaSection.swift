@@ -28,10 +28,13 @@ public struct AccountQuotaSection: View {
                     }
                 }
 
+                if !account.supportsStandardQuotaWindows {
+                    Text("이 시간 구간의 자동 초기화 알림은 지원하지 않습니다.").font(.caption).foregroundStyle(.secondary)
+                }
                 HStack(alignment: .top, spacing: 8) {
                     quotaCard(
-                        title: "5시간 할당량",
-                        subtitle: "5-hour quota",
+                        title: AccountDashboardFormatting.quotaWindowTitle(minutes: account.primaryWindowMinutes, primary: true),
+                        subtitle: AccountDashboardFormatting.quotaWindowTitle(minutes: account.primaryWindowMinutes, primary: true),
                         remaining: account.fiveHourRemainingPercent,
                         resetAt: account.primaryResetAt,
                         observation: account.primaryResetObservation,
@@ -39,8 +42,8 @@ public struct AccountQuotaSection: View {
                         now: context.date
                     )
                     quotaCard(
-                        title: "주간 할당량",
-                        subtitle: "Weekly quota",
+                        title: AccountDashboardFormatting.quotaWindowTitle(minutes: account.secondaryWindowMinutes, primary: false),
+                        subtitle: AccountDashboardFormatting.quotaWindowTitle(minutes: account.secondaryWindowMinutes, primary: false),
                         remaining: account.overallRemainingPercent,
                         resetAt: account.secondaryResetAt,
                         observation: account.secondaryResetObservation,

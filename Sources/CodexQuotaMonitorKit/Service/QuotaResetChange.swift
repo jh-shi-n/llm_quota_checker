@@ -16,7 +16,8 @@ public struct QuotaResetChange: Equatable, Sendable {
 
     /// 계정 식별·조회 순서 확인 후 사용량 회복과 시각 변경의 독립 판정
     public static func detect(previous: AccountState, current: AccountState, now: Date = Date()) -> [Self] {
-        guard previous.status == .normal, current.status == .normal,
+        guard previous.supportsStandardQuotaWindows, current.supportsStandardQuotaWindows,
+              previous.status == .normal, current.status == .normal,
               previous.id == current.id, previous.provider == current.provider,
               previous.configurationGeneration == current.configurationGeneration,
               previous.email == current.email, previous.planType == current.planType else { return [] }
