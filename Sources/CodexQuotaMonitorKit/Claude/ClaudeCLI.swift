@@ -19,7 +19,7 @@ public enum ClaudeQuotaError: Error, LocalizedError, Equatable {
         case .liveQueryFailed: return "Claude - /usage query failed"
         case .cliMissing: return "Claude - Claude cli not found"
         case .loginRequired: return "Claude - Login Required"
-        case .unsupportedAccount: return "Claude - Pro·Max subscription required"
+        case .unsupportedAccount: return "Claude - Pro·Max·Ultra subscription required"
         case .timeout: return "Claude - CLI timed out"
         case .invalidData: return "Claude - Invalid quota data"
         case .settingsChanged: return "Claude - Settings changed"
@@ -41,7 +41,7 @@ public struct ClaudeAuthentication: Decodable, Sendable {
     }
 
     public var supportsQuota: Bool {
-        authMethod == "claude.ai" && ["pro", "max"].contains(subscriptionType?.lowercased() ?? "")
+        authMethod == "claude.ai" && ["pro", "max", "ultra"].contains(subscriptionType?.lowercased() ?? "")
     }
 }
 

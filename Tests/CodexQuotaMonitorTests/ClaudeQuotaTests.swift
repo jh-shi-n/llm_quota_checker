@@ -8,6 +8,20 @@ import XCTest
 
 /// 수집기와 실제 파일·프로세스 경계의 검증
 final class ClaudeQuotaTests: XCTestCase {
+    /// 유료 구독 추가 시 API 인증·미확인 구독의 무조건 허용 방지
+    func testPaidSubscriptionEligibility() throws {
+        for plan in ["pro", "max", "ultra", "ULTRA", "unknown"] {
+            for method in ["claude.ai", "api_key"] {
+                let data = try JSONSerialization.data(withJSONObject: ["loggedIn": true,
+                    "subscriptionType": plan, "authMethod": method])
+                let auth = try JSONDecoder().decode(ClaudeAuthentication.self, from: data)
+                XCTAssertEqual(auth.supportsQuota, method == "claude.ai" && plan != "unknown")
+            }
+        }
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("ultra"), "Ultra")
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("max"), "Max")
+    }
+
     /// 인증 응답을 제어하는 임시 Claude 폴더·CLI 구성
     private func fixture() throws -> (URL, ClaudeCLI) {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(".claude-" + UUID().uuidString)
