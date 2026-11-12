@@ -9,6 +9,25 @@ import XCTest
 
 /// - 목적: 진단 로그 보관·검증·실패 격리 확인
 final class DiagnosticLoggerTests: XCTestCase {
+    /// 제공자별 버전 파싱 및 실제 실행 파일 결과의 제한된 진단 기록 검증
+    func testCLIVersionRecordsProviderWithoutRawOutput() throws {
+        XCTAssertEqual(DiagnosticLogContext.cliVersion(from: "codex-cli 0.167.2\n", provider: .codex), "0.167.2")
+        XCTAssertEqual(DiagnosticLogContext.cliVersion(from: "2.1.322 (Claude Code)\n", provider: .claude), "2.1.322")
+        XCTAssertNil(DiagnosticLogContext.cliVersion(from: "2.1.322 (Claude Code) secret", provider: .claude))
+        XCTAssertNil(DiagnosticLogContext.cliVersion(from: "codex-cli /private/path", provider: .codex))
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("claude-fixture")
+        try Data("#!/bin/sh\nprintf '2.1.322 (Claude Code)\\n'\n".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        let logger = DiagnosticLogger(directory: directory, osLogEnabled: false, timerEnabled: false)
+        DiagnosticLogContext.recordCLIVersion(provider: .claude, executable: executable, logger: logger)
+        logger.flush()
+        let fields = try XCTUnwrap(try jsonLines(in: directory).first?["fields"] as? [String: Any])
+        XCTAssertEqual((fields["provider"] as? [String: Any])?["value"] as? String, "claude")
+        XCTAssertEqual((fields["cliVersion"] as? [String: Any])?["value"] as? String, "2.1.322")
+    }
+
     /// - 목적: 7일 보존 경계의 등호 포함 및 이전 기록 제거 확인
     func testRetentionKeepsExactBoundaryAndRemovesOlderRecords() throws {
         let directory = try temporaryDirectory()

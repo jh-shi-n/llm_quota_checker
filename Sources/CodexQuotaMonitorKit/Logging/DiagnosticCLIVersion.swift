@@ -9,63 +9,87 @@ extension DiagnosticLogContext {
     /// 원문 출력·경로 저장 없이 최대 2초 동안 CLI 버전 확인
     public static func recordCLIVersion() {
         let logger = Self.logger ?? .shared
-        DispatchQueue.global(qos: .utility).async {
-            guard let executable = CodexLocator().locate() else {
-                logger.record(.cliDetected, fields: [.reason: .identifier("executable_unavailable")])
-                return
+        for provider in [AccountProvider.codex, .claude] {
+            DispatchQueue.global(qos: .utility).async {
+                let executable = provider == .codex ? CodexLocator().locate() : ClaudeCLI.locate()
+                recordCLIVersion(provider: provider, executable: executable, logger: logger)
             }
-            let process = Process()
-            let output = Pipe()
-            let capture = DiagnosticVersionCapture()
-            let ended = DispatchSemaphore(value: 0)
-            process.executableURL = executable
-            process.arguments = ["--version"]
-            var environment = ProcessInfo.processInfo.environment
-            environment["PATH"] = CodexProcess.childPath(inheritedPath: environment["PATH"], executable: executable)
-            process.environment = environment
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = output
-            process.standardError = FileHandle.nullDevice
-            process.terminationHandler = { _ in ended.signal() }
-            output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
-            defer {
-                output.fileHandleForReading.readabilityHandler = nil
-                try? output.fileHandleForReading.close()
-                try? output.fileHandleForWriting.close()
-                process.terminationHandler = nil
-            }
-            do { try process.run() }
-            catch {
-                logger.record(.cliDetected, level: .error, fields: [.reason: .identifier("launch_failure")])
-                return
-            }
-            try? output.fileHandleForWriting.close()
-            if ended.wait(timeout: .now() + 2) == .timedOut {
-                if process.isRunning {
-                    process.terminate()
-                    if ended.wait(timeout: .now() + 0.25) == .timedOut, process.isRunning {
-                        _ = kill(process.processIdentifier, SIGKILL)
-                        _ = ended.wait(timeout: .now() + 0.25)
-                    }
-                }
-                logger.record(.cliDetected, level: .error, fields: [.reason: .identifier("timeout")])
-                return
-            }
-            output.fileHandleForReading.readabilityHandler = nil
-            let descriptor = output.fileHandleForReading.fileDescriptor
-            let flags = fcntl(descriptor, F_GETFL)
-            if flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
-               let remaining = try? output.fileHandleForReading.read(upToCount: 512) {
-                capture.append(remaining)
-            }
-            let parts = capture.value.split(whereSeparator: { $0.isWhitespace })
-            guard process.terminationStatus == 0, parts.count == 2, parts[0] == "codex-cli",
-                  parts[1].first?.isNumber == true else {
-                logger.record(.cliDetected, level: .error, fields: [.reason: .identifier("unrecognized_version")])
-                return
-            }
-            logger.record(.cliDetected, fields: [.cliVersion: .identifier(String(parts[1]))])
         }
+    }
+
+    /// 실제 선택 CLI의 제한 출력과 제공자별 버전 형식만 진단 로그에 반영
+    static func recordCLIVersion(provider: AccountProvider, executable: URL?, logger: DiagnosticLogger) {
+        guard let executable else {
+            logger.record(.cliDetected, fields: [.provider: .identifier(provider.rawValue), .reason: .identifier("executable_unavailable")])
+            return
+        }
+        let process = Process()
+        let output = Pipe()
+        let capture = DiagnosticVersionCapture()
+        let ended = DispatchSemaphore(value: 0)
+        process.executableURL = executable
+        process.arguments = ["--version"]
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = CodexProcess.childPath(inheritedPath: environment["PATH"], executable: executable)
+        process.environment = environment
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { _ in ended.signal() }
+        output.fileHandleForReading.readabilityHandler = { capture.append($0.availableData) }
+        defer {
+            output.fileHandleForReading.readabilityHandler = nil
+            try? output.fileHandleForReading.close()
+            try? output.fileHandleForWriting.close()
+            process.terminationHandler = nil
+        }
+        do { try process.run() }
+        catch {
+            logger.record(.cliDetected, level: .error, fields: [.provider: .identifier(provider.rawValue), .reason: .identifier("launch_failure")])
+            return
+        }
+        try? output.fileHandleForWriting.close()
+        if ended.wait(timeout: .now() + 2) == .timedOut {
+            if process.isRunning {
+                process.terminate()
+                if ended.wait(timeout: .now() + 0.25) == .timedOut, process.isRunning {
+                    _ = kill(process.processIdentifier, SIGKILL)
+                    _ = ended.wait(timeout: .now() + 0.25)
+                }
+            }
+            logger.record(.cliDetected, level: .error, fields: [.provider: .identifier(provider.rawValue), .reason: .identifier("timeout")])
+            return
+        }
+        output.fileHandleForReading.readabilityHandler = nil
+        let descriptor = output.fileHandleForReading.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0,
+           let remaining = try? output.fileHandleForReading.read(upToCount: 512) {
+            capture.append(remaining)
+        }
+        guard process.terminationStatus == 0,
+              let version = cliVersion(from: capture.value, provider: provider) else {
+            logger.record(.cliDetected, level: .error, fields: [.provider: .identifier(provider.rawValue), .reason: .identifier("unrecognized_version")])
+            return
+        }
+        logger.record(.cliDetected, fields: [.provider: .identifier(provider.rawValue), .cliVersion: .identifier(version)])
+    }
+
+    /// 경로·추가 원문을 거절하는 제공자별 안정 버전 파싱
+    static func cliVersion(from output: String, provider: AccountProvider) -> String? {
+        let parts = output.split(whereSeparator: { $0.isWhitespace })
+        let version: String
+        switch provider {
+        case .codex:
+            guard parts.count == 2, parts[0] == "codex-cli" else { return nil }
+            version = String(parts[1])
+        case .claude:
+            guard parts.count == 3, parts[1] == "(Claude", parts[2] == "Code)" else { return nil }
+            version = String(parts[0])
+        }
+        guard version.count <= 32,
+              version.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+$"#, options: .regularExpression) != nil else { return nil }
+        return version
     }
 }
 

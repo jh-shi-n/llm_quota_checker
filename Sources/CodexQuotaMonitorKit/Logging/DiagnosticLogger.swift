@@ -998,6 +998,7 @@ public enum DiagnosticField: String, CaseIterable, Sendable {
     case version
     case build
     case cliVersion
+    case provider
     case forceFresh
     case applied
     case primaryResetBefore
