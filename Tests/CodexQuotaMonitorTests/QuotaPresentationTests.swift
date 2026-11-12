@@ -4,6 +4,22 @@ import SwiftUI
 
 @MainActor
 final class QuotaPresentationTests: XCTestCase {
+    /// 내부 코드의 임의 상품명·등급 색상 생성 방지 및 공식 상품군 표시 검증
+    func testSubscriptionBadgesUsePublicPlanNames() {
+        for plan in ["pro", "prolite", "promax", " PROLITE "] {
+            XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText(plan), "프로")
+            XCTAssertEqual(SubscriptionBadgeStyle.accentColor(for: plan), SubscriptionBadgeStyle.accentColor(for: "pro"))
+        }
+        for plan in ["team", "business", "self_serve_business_prolite", "self_serve_business_usage_based"] {
+            XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText(plan), "비즈니스")
+            XCTAssertEqual(SubscriptionBadgeStyle.accentColor(for: plan), SubscriptionBadgeStyle.accentColor(for: "business"))
+        }
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("max"), "Max")
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("ultra"), "Ultra")
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("unknown"), "구독 확인 필요")
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText(nil), "—")
+    }
+
     /// 전송 성공과 한도별 관측 결과를 구분한 상세 문구 검증
     func testProbeTextDistinguishesStableAndMovingWindows() {
         let now = Date()
