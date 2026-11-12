@@ -17,6 +17,11 @@ final class ClaudeUsageQueryTests: XCTestCase {
         XCTAssertEqual(rates["five_hour"]?["resets_at"], 1793167800)
         XCTAssertEqual(rates["seven_day"]?["resets_at"], 1793440800)
         XCTAssertThrowsError(try ClaudeUsageQuery.decode(text: "Showing last-known usage\n" + text, now: now))
+        for note in ["Usage as of 10:00am", "Usage AS OF yesterday", "Showing last known usage"] {
+            XCTAssertThrowsError(try ClaudeUsageQuery.decode(text: note + "\n" + text, now: now)) {
+                XCTAssertEqual($0 as? ClaudeQuotaError, .staleUsage)
+            }
+        }
         XCTAssertThrowsError(try ClaudeUsageQuery.decode(text: "Usage endpoint is rate limited", now: now))
         XCTAssertThrowsError(try ClaudeUsageQuery.decode(text: "unexpected format", now: now))
     }
