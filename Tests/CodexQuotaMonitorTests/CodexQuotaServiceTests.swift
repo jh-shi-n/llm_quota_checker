@@ -3,6 +3,29 @@ import XCTest
 @testable import CodexQuotaMonitorKit
 
 final class CodexQuotaServiceTests: XCTestCase {
+    /// 기존 응답·다른 제품과 Codex 버킷의 구간·플랜·차단 상태 혼합 방지
+    func testCodexBucketIsSelectedAsOneSnapshot() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("auth.json"))
+        let transport = RecordingTransport(responses: [
+            0: CodexMessage(id: 0, result: .object([:])),
+            1: CodexMessage(id: 1, result: .object([:])),
+            2: CodexMessage(id: 2, result: .object([
+                "rateLimits": .object(["primary": .object(["usedPercent": .number(99)])]),
+                "rateLimitsByLimitId": .object(["codex": .object([
+                    "secondary": .object(["usedPercent": .number(12)]),
+                    "planType": .string("business"), "spendControlReached": .bool(true)])])]))
+        ])
+        let service = CodexQuotaService(locator: FixedCodexLocator(url: directory.appendingPathComponent("codex")),
+            processFactory: { transport })
+        let state = service.stateSync(for: AccountConfig(id: "C1", home: directory, position: .left))
+        XCTAssertNil(state.primaryUsedPercent)
+        XCTAssertEqual(state.secondaryUsedPercent, 12)
+        XCTAssertEqual(state.planType, "business")
+        XCTAssertEqual(state.codexUsageAccess?.spendControlReached, true)
+    }
+
     /// 실제 시간 구간 파싱·영속화·고정 알림 제외 및 표시 길이 검증
     func testVariableQuotaWindowsRetainTheirDuration() throws {
         let directory = try makeTemporaryDirectory()

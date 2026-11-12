@@ -430,18 +430,17 @@ public struct CodexQuotaService: Sendable {
         guard let result = rateLimitsResponse.result?.objectValue else {
             throw CodexQuotaServiceError.malformedResponse("Missing rate limit result")
         }
-        let limits = result["rateLimits"]?.objectValue ?? [:]
-        let limitsByID = result["rateLimitsByLimitId"]?.objectValue
-        let accessLimits = limits.isEmpty ? limitsByID?["codex"]?.objectValue ?? [:] : limits
-        let access = CodexUsageAccess.parse(result: result, limits: accessLimits)
+        let limits = selectedCodexLimits(in: result)
+        planType = limits["planType"]?.stringValue ?? planType
+        let access = CodexUsageAccess.parse(result: result, limits: limits)
         let candidates = [
             classifyLimit(
                 key: "primary",
-                values: limit(key: "primary", historicalLimits: limits, limitsByID: limitsByID)
+                values: limits["primary"]?.objectValue
             ),
             classifyLimit(
                 key: "secondary",
-                values: limit(key: "secondary", historicalLimits: limits, limitsByID: limitsByID)
+                values: limits["secondary"]?.objectValue
             ),
         ].compactMap { $0 }
         let primary = selectLimit(candidates, window: .fiveHour)
@@ -521,18 +520,14 @@ public struct CodexQuotaService: Sendable {
         values["resetsAt"]?.numberValue.map(Date.init(timeIntervalSince1970:))
     }
 
-    /// Prefer historical fields, then the metered Codex bucket used by newer
-    /// app-server versions. No other product bucket is eligible.
-    private func limit(
-        key: String,
-        historicalLimits: [String: CodexJSONValue],
-        limitsByID: [String: CodexJSONValue]?
-    ) -> [String: CodexJSONValue]? {
-        if let historical = historicalLimits[key], historical != .null {
-            return historical.objectValue
+    /// 기존 단일 응답과 Codex 버킷의 구간·차단 상태 혼합 방지
+    private func selectedCodexLimits(in result: [String: CodexJSONValue]) -> [String: CodexJSONValue] {
+        if let bucket = result["rateLimitsByLimitId"]?.objectValue?["codex"]?.objectValue {
+            return bucket
         }
-
-        return limitsByID?["codex"]?.objectValue?[key]?.objectValue
+        guard let historical = result["rateLimits"]?.objectValue,
+              historical["limitId"]?.stringValue.map({ $0 == "codex" }) ?? true else { return [:] }
+        return historical
     }
 
     private func map(_ error: CodexProcessError) -> CodexQuotaServiceError {
