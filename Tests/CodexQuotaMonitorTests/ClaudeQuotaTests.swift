@@ -8,6 +8,57 @@ import XCTest
 
 /// 수집기와 실제 파일·프로세스 경계의 검증
 final class ClaudeQuotaTests: XCTestCase {
+    /// 공식 ISO 만료일·구버전 누락·손상 값 및 제공자별 경고 범위 검증
+    func testLoginExpirationIsOptionalAndProviderScoped() throws {
+        for text in ["2030-01-01T00:00:00Z", "2030-01-01T00:00:00.123Z", "invalid"] {
+            let data = try JSONSerialization.data(withJSONObject: ["loggedIn": true, "loginExpiresAt": text])
+            let auth = try JSONDecoder().decode(ClaudeAuthentication.self, from: data)
+            XCTAssertEqual(auth.loginExpiresAt != nil, text != "invalid")
+        }
+        XCTAssertNil(try JSONDecoder().decode(ClaudeAuthentication.self, from: Data("{\"loggedIn\":true}".utf8)).loginExpiresAt)
+        let now = Date()
+        var state = AccountState(id: "C1", status: .normal, provider: .claude)
+        state.loginExpiresAt = now.addingTimeInterval(86400)
+        XCTAssertNotNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.loginExpiresAt = now.addingTimeInterval(11 * 86400)
+        XCTAssertNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.loginExpiresAt = now.addingTimeInterval(-1)
+        XCTAssertNotNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+        state.provider = .codex
+        XCTAssertNil(AccountDashboardFormatting.loginExpirationNotice(for: state, now: now))
+    }
+
+    /// JSON 모양의 실패 출력·로그아웃 응답과 정상 종료 구분 검증
+    func testCLIRejectsNonzeroExitEvenWithJSON() throws {
+        let (home, cli) = try fixture()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let executable = try XCTUnwrap(cli.executable)
+        try Data("#!/bin/sh\nprintf '{}'\nexit 7\n".utf8).write(to: executable)
+        XCTAssertThrowsError(try cli.run(arguments: ["--print", "/usage"], home: home, limit: 1)) {
+            XCTAssertEqual($0 as? ClaudeQuotaError, .processFailed(7))
+        }
+        try Data("#!/bin/sh\nprintf '{\"loggedIn\":false}'\nexit 1\n".utf8).write(to: executable)
+        XCTAssertThrowsError(try cli.authentication(home: home)) {
+            XCTAssertEqual($0 as? ClaudeQuotaError, .loginRequired)
+        }
+        try Data("#!/bin/sh\nprintf '{}'\n".utf8).write(to: executable)
+        XCTAssertEqual(try cli.run(arguments: [], home: home, limit: 1), Data("{}".utf8))
+    }
+
+    /// 유료 구독 추가 시 API 인증·미확인 구독의 무조건 허용 방지
+    func testPaidSubscriptionEligibility() throws {
+        for plan in ["pro", "max", "ultra", "ULTRA", "unknown"] {
+            for method in ["claude.ai", "api_key"] {
+                let data = try JSONSerialization.data(withJSONObject: ["loggedIn": true,
+                    "subscriptionType": plan, "authMethod": method])
+                let auth = try JSONDecoder().decode(ClaudeAuthentication.self, from: data)
+                XCTAssertEqual(auth.supportsQuota, method == "claude.ai" && plan != "unknown")
+            }
+        }
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("ultra"), "Ultra")
+        XCTAssertEqual(AccountDashboardFormatting.subscriptionBadgeText("max"), "Max")
+    }
+
     /// 인증 응답을 제어하는 임시 Claude 폴더·CLI 구성
     private func fixture() throws -> (URL, ClaudeCLI) {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(".claude-" + UUID().uuidString)

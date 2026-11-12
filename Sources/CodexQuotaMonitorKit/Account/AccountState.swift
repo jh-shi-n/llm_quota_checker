@@ -24,8 +24,20 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
     public var resetCredits: RateLimitResetCredits?
     public var email: String?
     public var planType: String?
+    /// 공식 Claude 인증 응답의 선택적 로그인 만료 시각
+    public var loginExpiresAt: Date?
+    /// 사용률·초기화 시각과 독립적인 서버 제한 관측
+    public var codexUsageAccess: CodexUsageAccess?
     public var primaryResetAt: Date?
     public var secondaryResetAt: Date?
+    /// 서버가 제공한 실제 한도 구간 길이와 구버전 기본 구간의 구분
+    public var primaryWindowMinutes: Double?
+    public var secondaryWindowMinutes: Double?
+    /// 고정 5시간·주간 알림을 적용할 수 있는 구간 여부
+    public var supportsStandardQuotaWindows: Bool {
+        (primaryWindowMinutes == nil || primaryWindowMinutes == 300)
+            && (secondaryWindowMinutes == nil || secondaryWindowMinutes == 10080)
+    }
     /// 현재 조회와 유효한 저장 근거에서 도출한 초기화 시각 관측
     public var primaryResetObservation: ResetTimeObservation = .checking
     public var secondaryResetObservation: ResetTimeObservation = .checking
@@ -101,6 +113,8 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
         secondaryRemainingPercent: Double? = nil,
         primaryResetAt: Date? = nil,
         secondaryResetAt: Date? = nil,
+        primaryWindowMinutes: Double? = nil,
+        secondaryWindowMinutes: Double? = nil,
         usedPercent: Double? = nil,
         remainingPercent: Double? = nil,
         resetAt: Date? = nil,
@@ -117,6 +131,8 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
         self.planType = planType
         self.primaryResetAt = primaryResetAt ?? resetAt
         self.secondaryResetAt = secondaryResetAt
+        self.primaryWindowMinutes = primaryWindowMinutes
+        self.secondaryWindowMinutes = secondaryWindowMinutes
         self.lastUpdated = lastUpdated
         self.status = status
         self.errorMessage = errorMessage
@@ -166,10 +182,10 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, email, planType, resetCredits, provider
+        case id, email, planType, resetCredits, provider, codexUsageAccess, loginExpiresAt
         case primaryUsedPercent, secondaryUsedPercent
         case primaryRemainingPercent, secondaryRemainingPercent
-        case primaryResetAt, secondaryResetAt
+        case primaryResetAt, secondaryResetAt, primaryWindowMinutes, secondaryWindowMinutes
         case usedPercent, remainingPercent, resetAt
         case lastUpdated, status, errorMessage
     }
@@ -186,6 +202,8 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
             secondaryRemainingPercent: try container.decodeIfPresent(Double.self, forKey: .secondaryRemainingPercent),
             primaryResetAt: try container.decodeIfPresent(Date.self, forKey: .primaryResetAt),
             secondaryResetAt: try container.decodeIfPresent(Date.self, forKey: .secondaryResetAt),
+            primaryWindowMinutes: try container.decodeIfPresent(Double.self, forKey: .primaryWindowMinutes),
+            secondaryWindowMinutes: try container.decodeIfPresent(Double.self, forKey: .secondaryWindowMinutes),
             usedPercent: try container.decodeIfPresent(Double.self, forKey: .usedPercent),
             remainingPercent: try container.decodeIfPresent(Double.self, forKey: .remainingPercent),
             resetAt: try container.decodeIfPresent(Date.self, forKey: .resetAt),
@@ -195,6 +213,8 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
             errorMessage: try container.decodeIfPresent(String.self, forKey: .errorMessage),
             provider: try container.decodeIfPresent(AccountProvider.self, forKey: .provider) ?? .codex
         )
+        codexUsageAccess = try container.decodeIfPresent(CodexUsageAccess.self, forKey: .codexUsageAccess)
+        loginExpiresAt = try container.decodeIfPresent(Date.self, forKey: .loginExpiresAt)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -204,10 +224,14 @@ public struct AccountState: Identifiable, Codable, Equatable, Sendable {
         try container.encode(provider, forKey: .provider)
         try container.encodeIfPresent(email, forKey: .email)
         try container.encodeIfPresent(planType, forKey: .planType)
+        try container.encodeIfPresent(codexUsageAccess, forKey: .codexUsageAccess)
+        try container.encodeIfPresent(loginExpiresAt, forKey: .loginExpiresAt)
         try container.encodeIfPresent(primaryUsedPercent, forKey: .primaryUsedPercent)
         try container.encodeIfPresent(secondaryUsedPercent, forKey: .secondaryUsedPercent)
         try container.encodeIfPresent(primaryRemainingPercent, forKey: .primaryRemainingPercent)
         try container.encodeIfPresent(secondaryRemainingPercent, forKey: .secondaryRemainingPercent)
+        try container.encodeIfPresent(primaryWindowMinutes, forKey: .primaryWindowMinutes)
+        try container.encodeIfPresent(secondaryWindowMinutes, forKey: .secondaryWindowMinutes)
         try container.encodeIfPresent(primaryResetAt, forKey: .primaryResetAt)
         try container.encodeIfPresent(secondaryResetAt, forKey: .secondaryResetAt)
         try container.encodeIfPresent(usedPercent, forKey: .usedPercent)

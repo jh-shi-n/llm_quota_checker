@@ -46,6 +46,10 @@ extension CodexQuotaServiceError: LocalizedError {
 /// A quota snapshot containing the rolling five-hour primary quota and the
 /// overall secondary quota when the server supplies it.
 public struct CodexQuota: Equatable, Sendable {
+    public var usageAccess: CodexUsageAccess?
+    var hasQuotaWindows = true
+    public var primaryWindowMinutes: Double?
+    public var secondaryWindowMinutes: Double?
     public let resetCredits: RateLimitResetCredits?
     public let email: String?
     public let planType: String?
@@ -343,11 +347,11 @@ public struct CodexQuotaService: Sendable {
         switch result {
         case let .success(quota):
             let primaryIsOverall = quota.primaryWindowIsOverall
-            return AccountState(
+            var state = AccountState(
                 id: config.id,
                 email: quota.email,
                 planType: quota.planType,
-                primaryUsedPercent: primaryIsOverall ? nil : quota.primaryUsedPercent,
+                primaryUsedPercent: primaryIsOverall || !quota.hasQuotaWindows ? nil : quota.primaryUsedPercent,
                 secondaryUsedPercent: primaryIsOverall
                     ? quota.secondaryUsedPercent ?? quota.primaryUsedPercent
                     : quota.secondaryUsedPercent,
@@ -355,10 +359,15 @@ public struct CodexQuotaService: Sendable {
                 secondaryResetAt: primaryIsOverall
                     ? quota.secondaryResetAt ?? quota.primaryResetAt
                     : quota.secondaryResetAt,
+                primaryWindowMinutes: primaryIsOverall ? nil : quota.primaryWindowMinutes,
+                secondaryWindowMinutes: quota.secondaryWindowMinutes,
                 resetCredits: quota.resetCredits,
                 lastUpdated: Date(),
-                status: .normal
+                status: quota.usageAccess?.isBlocked == true ? .error : .normal,
+                errorMessage: quota.usageAccess?.message
             )
+            state.codexUsageAccess = quota.usageAccess
+            return state
         case let .failure(error):
             if error == .notConfigured {
                 return AccountState.notConfigured(id: config.id)
@@ -421,26 +430,34 @@ public struct CodexQuotaService: Sendable {
         guard let result = rateLimitsResponse.result?.objectValue else {
             throw CodexQuotaServiceError.malformedResponse("Missing rate limit result")
         }
-        let limits = result["rateLimits"]?.objectValue ?? [:]
-        let limitsByID = result["rateLimitsByLimitId"]?.objectValue
+        let limits = selectedCodexLimits(in: result)
+        planType = limits["planType"]?.stringValue ?? planType
+        let access = CodexUsageAccess.parse(result: result, limits: limits)
         let candidates = [
             classifyLimit(
                 key: "primary",
-                values: limit(key: "primary", historicalLimits: limits, limitsByID: limitsByID)
+                values: limits["primary"]?.objectValue
             ),
             classifyLimit(
                 key: "secondary",
-                values: limit(key: "secondary", historicalLimits: limits, limitsByID: limitsByID)
+                values: limits["secondary"]?.objectValue
             ),
         ].compactMap { $0 }
         let primary = selectLimit(candidates, window: .fiveHour)
         let secondary = selectLimit(candidates, window: .overall)
         guard let selected = primary ?? secondary,
               let selectedUsedPercent = finiteUsedPercent(in: selected.values) else {
+            if access.isBlocked {
+                var blocked = CodexQuota(email: email, planType: planType, primaryUsedPercent: 0,
+                    resetCredits: RateLimitResetCredits.parse(result["rateLimitResetCredits"]))
+                blocked.hasQuotaWindows = false
+                blocked.usageAccess = access
+                return blocked
+            }
             throw CodexQuotaServiceError.malformedResponse("Missing rateLimits.primary.usedPercent")
         }
 
-        return CodexQuota(
+        var quota = CodexQuota(
             email: email,
             planType: planType,
             primaryUsedPercent: selectedUsedPercent,
@@ -450,6 +467,10 @@ public struct CodexQuotaService: Sendable {
             secondaryResetAt: secondary.flatMap { resetDate(in: $0.values) },
             resetCredits: RateLimitResetCredits.parse(result["rateLimitResetCredits"])
         )
+        quota.primaryWindowMinutes = primary?.values["windowDurationMins"]?.numberValue
+        quota.secondaryWindowMinutes = secondary?.values["windowDurationMins"]?.numberValue
+        quota.usageAccess = access
+        return quota
     }
 
     private enum QuotaWindow: Equatable {
@@ -469,14 +490,14 @@ public struct CodexQuotaService: Sendable {
     ) -> ClassifiedLimit? {
         guard let values else { return nil }
         if let duration = values["windowDurationMins"]?.numberValue {
-            guard duration.isFinite else { return nil }
+            guard duration.isFinite, duration > 0, duration <= Double(Int32.max), duration.rounded() == duration else { return nil }
             if duration == 300 {
                 return ClassifiedLimit(window: .fiveHour, values: values, usesExplicitDuration: true)
             }
             if duration == 10080 {
                 return ClassifiedLimit(window: .overall, values: values, usesExplicitDuration: true)
             }
-            return nil
+            return ClassifiedLimit(window: key == "primary" ? .fiveHour : .overall, values: values, usesExplicitDuration: true)
         }
 
         let window: QuotaWindow = key == "primary" ? .fiveHour : .overall
@@ -499,18 +520,14 @@ public struct CodexQuotaService: Sendable {
         values["resetsAt"]?.numberValue.map(Date.init(timeIntervalSince1970:))
     }
 
-    /// Prefer historical fields, then the metered Codex bucket used by newer
-    /// app-server versions. No other product bucket is eligible.
-    private func limit(
-        key: String,
-        historicalLimits: [String: CodexJSONValue],
-        limitsByID: [String: CodexJSONValue]?
-    ) -> [String: CodexJSONValue]? {
-        if let historical = historicalLimits[key], historical != .null {
-            return historical.objectValue
+    /// 기존 단일 응답과 Codex 버킷의 구간·차단 상태 혼합 방지
+    private func selectedCodexLimits(in result: [String: CodexJSONValue]) -> [String: CodexJSONValue] {
+        if let bucket = result["rateLimitsByLimitId"]?.objectValue?["codex"]?.objectValue {
+            return bucket
         }
-
-        return limitsByID?["codex"]?.objectValue?[key]?.objectValue
+        guard let historical = result["rateLimits"]?.objectValue,
+              historical["limitId"]?.stringValue.map({ $0 == "codex" }) ?? true else { return [:] }
+        return historical
     }
 
     private func map(_ error: CodexProcessError) -> CodexQuotaServiceError {

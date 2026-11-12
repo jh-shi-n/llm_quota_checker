@@ -9,9 +9,11 @@ import Foundation
 /// 인증정보 원문을 포함하지 않는 CLI 실패 구분
 public enum ClaudeQuotaError: Error, LocalizedError, Equatable {
     case cliMissing, loginRequired, unsupportedAccount, timeout, invalidData, settingsChanged, rateLimited, liveQueryFailed, staleUsage, telemetryConflict, telemetryUnavailable
+    case processFailed(Int32)
 
     public var errorDescription: String? {
         switch self {
+        case .processFailed: return "Claude - CLI command failed"
         case .telemetryUnavailable: return "Claude - Token collector failed to start"
         case .telemetryConflict: return "Claude - OpenTelemetry settings conflict"
         case .rateLimited: return "Claude - Usage query rate limited"
@@ -19,7 +21,7 @@ public enum ClaudeQuotaError: Error, LocalizedError, Equatable {
         case .liveQueryFailed: return "Claude - /usage query failed"
         case .cliMissing: return "Claude - Claude cli not found"
         case .loginRequired: return "Claude - Login Required"
-        case .unsupportedAccount: return "Claude - Pro·Max subscription required"
+        case .unsupportedAccount: return "Claude - Pro·Max·Ultra subscription required"
         case .timeout: return "Claude - CLI timed out"
         case .invalidData: return "Claude - Invalid quota data"
         case .settingsChanged: return "Claude - Settings changed"
@@ -34,6 +36,26 @@ public struct ClaudeAuthentication: Decodable, Sendable {
     public let email: String?
     public let orgId: String?
     public let subscriptionType: String?
+    public let loginExpiresAt: Date?
+
+    private enum CodingKeys: String, CodingKey {
+        case loggedIn, authMethod, email, orgId, subscriptionType, loginExpiresAt
+    }
+
+    /// 구버전 누락·잘못된 만료일을 허용하는 공식 인증 응답 복원
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        loggedIn = try values.decode(Bool.self, forKey: .loggedIn)
+        authMethod = try values.decodeIfPresent(String.self, forKey: .authMethod)
+        email = try values.decodeIfPresent(String.self, forKey: .email)
+        orgId = try values.decodeIfPresent(String.self, forKey: .orgId)
+        subscriptionType = try values.decodeIfPresent(String.self, forKey: .subscriptionType)
+        if let text = try? values.decode(String.self, forKey: .loginExpiresAt) {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            loginExpiresAt = formatter.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+        } else { loginExpiresAt = nil }
+    }
 
     public var identity: String {
         let value = [email ?? "", orgId ?? "", authMethod ?? ""].joined(separator: "\n")
@@ -41,7 +63,7 @@ public struct ClaudeAuthentication: Decodable, Sendable {
     }
 
     public var supportsQuota: Bool {
-        authMethod == "claude.ai" && ["pro", "max"].contains(subscriptionType?.lowercased() ?? "")
+        authMethod == "claude.ai" && ["pro", "max", "ultra"].contains(subscriptionType?.lowercased() ?? "")
     }
 }
 
@@ -100,6 +122,7 @@ public struct ClaudeCLI: Sendable {
         let data = try run(arguments: ["auth", "status"], home: home, limit: timeout)
         guard let authentication = try? JSONDecoder().decode(ClaudeAuthentication.self, from: data) else { throw ClaudeQuotaError.invalidData }
         guard authentication.loggedIn, authentication.email?.isEmpty == false else { throw ClaudeQuotaError.loginRequired }
+        if let expiration = authentication.loginExpiresAt, expiration <= Date() { throw ClaudeQuotaError.loginRequired }
         return authentication
     }
 
@@ -130,10 +153,19 @@ public struct ClaudeCLI: Sendable {
             while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.01) }
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             process.waitUntilExit()
+            if Task.isCancelled { throw CancellationError() }
             throw ClaudeQuotaError.timeout
         }
+        try Task.checkCancellation()
         let size = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber
         guard (size?.intValue ?? 0) <= 1_048_576 else { throw ClaudeQuotaError.invalidData }
-        return try Data(contentsOf: output)
+        let data = try Data(contentsOf: output)
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+            if arguments.starts(with: ["auth", "status"]),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               object["loggedIn"] as? Bool == false { throw ClaudeQuotaError.loginRequired }
+            throw ClaudeQuotaError.processFailed(process.terminationStatus)
+        }
+        return data
     }
 }

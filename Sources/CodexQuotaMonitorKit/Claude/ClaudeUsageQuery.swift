@@ -60,7 +60,10 @@ public actor ClaudeUsageQuery {
     /// 공식 명령의 알려진 표시 형식만 파싱하고 제한·오래된 값·형식 변경 거절
     static func decode(text: String, now: Date) throws -> [String: [String: Double]] {
         let normalized = text.lowercased()
-        if normalized.contains("rate limited") || normalized.contains("last-known") || normalized.contains("last known") { throw ClaudeQuotaError.rateLimited }
+        if normalized.contains("rate limited") || normalized.contains("rate-limited") { throw ClaudeQuotaError.rateLimited }
+        if normalized.contains("last-known") || normalized.contains("last known") || normalized.range(of: #"\bas\s+of\b"#, options: .regularExpression) != nil {
+            throw ClaudeQuotaError.staleUsage
+        }
         let pattern = #"(?im)^\s*(Current session|Current week \(all models\)):\s*([0-9]+(?:\.[0-9]+)?)% used\s*[·•-]\s*resets\s+([^\n]+?)\s*\(([^)]+)\)\s*$"#
         let expression = try NSRegularExpression(pattern: pattern)
         let string = text as NSString

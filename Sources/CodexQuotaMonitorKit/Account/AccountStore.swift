@@ -244,6 +244,7 @@ public final class AccountStore: ObservableObject {
             usedPercent: state.primaryUsedPercent, remainingPercent: state.primaryRemainingPercent,
             resetAt: state.primaryResetAt, secondaryUsedPercent: state.secondaryUsedPercent,
             secondaryRemainingPercent: state.secondaryRemainingPercent, secondaryResetAt: state.secondaryResetAt,
+            primaryWindowMinutes: state.primaryWindowMinutes, secondaryWindowMinutes: state.secondaryWindowMinutes,
             resetCredits: state.resetCredits, lastUpdated: state.lastUpdated, email: state.email, planType: state.planType,
             primaryResetEvidence: state.primaryResetEvidence, secondaryResetEvidence: state.secondaryResetEvidence,
             provider: state.provider))
@@ -573,6 +574,7 @@ public final class AccountStore: ObservableObject {
                     secondaryUsedPercent: state.secondaryUsedPercent,
                     primaryResetAt: state.primaryResetAt,
                     secondaryResetAt: state.secondaryResetAt,
+                    primaryWindowMinutes: state.primaryWindowMinutes, secondaryWindowMinutes: state.secondaryWindowMinutes,
                     resetCredits: state.resetCredits,
                     lastUpdated: state.lastUpdated,
                     status: state.status,
@@ -580,7 +582,18 @@ public final class AccountStore: ObservableObject {
                 )
             }
             state.provider = config.provider
-            if Self.shouldPreservePreviousSnapshot(for: state.status) {
+            if state.provider == .codex, state.codexUsageAccess != nil || previous?.codexUsageAccess != nil {
+                let sameAccount = state.email == nil || state.acceptsIdentity(of: previous ?? state)
+                state.codexUsageAccess = (state.codexUsageAccess ?? CodexUsageAccess())
+                    .merging(previous: sameAccount ? previous?.codexUsageAccess : nil)
+                if state.codexUsageAccess?.isBlocked == true {
+                    state.email = state.email ?? previous?.email
+                    state.planType = state.planType ?? previous?.planType
+                    state.status = .error
+                    state.errorMessage = state.codexUsageAccess?.message
+                }
+            }
+            if Self.shouldPreservePreviousSnapshot(for: state.status), state.codexUsageAccess?.isBlocked != true {
                 if state.provider == .claude {
                     state = Self.mergedClaudeFailure(state, previous: previous)
                 } else {
@@ -646,6 +659,8 @@ public final class AccountStore: ObservableObject {
             secondaryUsedPercent: previous.secondaryUsedPercent ?? returned.secondaryUsedPercent,
             primaryResetAt: previous.primaryResetAt ?? returned.primaryResetAt,
             secondaryResetAt: previous.secondaryResetAt ?? returned.secondaryResetAt,
+            primaryWindowMinutes: previous.primaryWindowMinutes ?? returned.primaryWindowMinutes,
+            secondaryWindowMinutes: previous.secondaryWindowMinutes ?? returned.secondaryWindowMinutes,
             resetCredits: previous.resetCredits ?? returned.resetCredits,
             lastUpdated: previous.lastUpdated ?? returned.lastUpdated,
             status: returned.status,
@@ -769,6 +784,7 @@ public final class AccountStore: ObservableObject {
                 secondaryUsedPercent: result.state.secondaryUsedPercent,
                 secondaryRemainingPercent: result.state.secondaryRemainingPercent,
                 secondaryResetAt: result.state.secondaryResetAt,
+                primaryWindowMinutes: result.state.primaryWindowMinutes, secondaryWindowMinutes: result.state.secondaryWindowMinutes,
                 resetCredits: result.state.resetCredits,
                 lastUpdated: result.state.lastUpdated,
                 email: state.email, planType: state.planType,
@@ -851,6 +867,7 @@ public final class AccountStore: ObservableObject {
             secondaryRemainingPercent: snapshot.secondaryRemainingPercent,
             primaryResetAt: snapshot.primaryResetAt,
             secondaryResetAt: snapshot.secondaryResetAt,
+            primaryWindowMinutes: snapshot.primaryWindowMinutes, secondaryWindowMinutes: snapshot.secondaryWindowMinutes,
             resetCredits: snapshot.resetCredits,
             lastUpdated: snapshot.lastUpdated,
             status: .loading,
@@ -903,6 +920,7 @@ public final class AccountStore: ObservableObject {
             secondaryUsedPercent: previous.secondaryUsedPercent,
             primaryResetAt: previous.primaryResetAt,
             secondaryResetAt: previous.secondaryResetAt,
+            primaryWindowMinutes: previous.primaryWindowMinutes, secondaryWindowMinutes: previous.secondaryWindowMinutes,
             resetCredits: previous.resetCredits,
             lastUpdated: previous.lastUpdated,
             status: .error,

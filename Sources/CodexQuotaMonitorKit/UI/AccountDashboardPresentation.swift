@@ -125,10 +125,30 @@ public enum AccountDashboardFormatting {
 
     /// 현재 할당량 제목 옆의 5시간 한도 안내; 이동·실패·만료·7일 한도 제외
     public static func fiveHourResetNotice(for account: AccountState, now: Date = Date()) -> String? {
-        guard let reset = observedResetDate(account.primaryResetAt,
+        guard account.primaryWindowMinutes == nil || account.primaryWindowMinutes == 300,
+              let reset = observedResetDate(account.primaryResetAt,
             observation: account.primaryResetObservation, status: account.status, now: now, provider: account.provider) else { return nil }
         let remaining = remainingTimeText(until: reset, now: now)
         return "\(remaining) 뒤 5시간 할당량이 초기화될 예정입니다."
+    }
+
+    /// 서버 구간 길이에 따른 한도 제목과 구버전 기본 제목 반환
+    public static func quotaWindowTitle(minutes: Double?, primary: Bool) -> String {
+        guard let minutes else { return primary ? "5시간 할당량" : "주간 할당량" }
+        guard minutes.isFinite, minutes > 0, minutes <= Double(Int32.max) else { return "한도 구간 확인 필요" }
+        if minutes == 10080 { return "주간 할당량" }
+        if minutes.truncatingRemainder(dividingBy: 1440) == 0 { return "\(numberText(Int64(minutes / 1440)))일 할당량" }
+        if minutes.truncatingRemainder(dividingBy: 60) == 0 { return "\(numberText(Int64(minutes / 60)))시간 할당량" }
+        return "\(numberText(Int64(min(minutes, Double(Int32.max)))))분 할당량"
+    }
+
+    /// 10일 이내 만료되는 Claude 로그인에 대한 재로그인 안내
+    public static func loginExpirationNotice(for account: AccountState, now: Date = Date()) -> String? {
+        guard account.provider == .claude, let expiration = account.loginExpiresAt,
+              expiration.timeIntervalSince1970.isFinite,
+              expiration.timeIntervalSince(now) <= 10 * 86400 else { return nil }
+        guard expiration > now else { return "로그인이 만료되었습니다. 다시 로그인해 주세요." }
+        return "로그인 만료 예정: \(dateText(expiration)) · 만료 전에 다시 로그인해 주세요."
     }
 
     /// 서버 구독 코드의 한글 뱃지 표시명 변환 및 미확인 값 처리
@@ -139,13 +159,10 @@ public enum AccountDashboardFormatting {
         case "free": return "무료"
         case "go": return "Go"
         case "plus": return "플러스"
-        case "pro": return "프로"
-        case "prolite": return "프로 라이트"
-        case "promax": return "프로 맥스"
-        case "team": return "팀"
-        case "business": return "비즈니스"
-        case "self_serve_business_prolite": return "비즈니스 프로 라이트"
-        case "self_serve_business_usage_based": return "비즈니스 사용량 기반"
+        case "pro", "prolite", "promax": return "프로"
+        case "max", "max5x", "max20x": return "Max"
+        case "ultra": return "Ultra"
+        case "team", "business", "self_serve_business_prolite", "self_serve_business_usage_based": return "비즈니스"
         case "enterprise", "ent26": return "엔터프라이즈"
         case "enterprise_cbp_automation": return "엔터프라이즈 자동화"
         case "enterprise_cbp_usage_based": return "엔터프라이즈 사용량 기반"

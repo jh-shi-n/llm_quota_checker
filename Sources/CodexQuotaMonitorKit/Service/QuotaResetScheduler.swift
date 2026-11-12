@@ -58,6 +58,10 @@ public final class QuotaResetScheduler {
                 let reset = window == .primary ? account.primaryResetAt : account.secondaryResetAt
                 let observation = window == .primary ? account.primaryResetObservation : account.secondaryResetObservation
                 let segmentID = window == .primary ? account.primaryResetSegmentID : account.secondaryResetSegmentID
+                guard account.supportsStandardQuotaWindows, account.codexUsageAccess?.isBlocked != true else {
+                    entries[key] = nil
+                    continue
+                }
                 if var old = entries[key], sameIdentity(old.account, account),
                    old.segmentID == segmentID || (account.provider == .claude && old.resetAt <= now && !old.boundaryHandled) {
                     // 도달과 동시에 정기 조회가 완료되어도 미처리 도달 이벤트 유지
