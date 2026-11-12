@@ -8,6 +8,23 @@ import XCTest
 
 /// 수집기와 실제 파일·프로세스 경계의 검증
 final class ClaudeQuotaTests: XCTestCase {
+    /// JSON 모양의 실패 출력·로그아웃 응답과 정상 종료 구분 검증
+    func testCLIRejectsNonzeroExitEvenWithJSON() throws {
+        let (home, cli) = try fixture()
+        defer { try? FileManager.default.removeItem(at: home) }
+        let executable = try XCTUnwrap(cli.executable)
+        try Data("#!/bin/sh\nprintf '{}'\nexit 7\n".utf8).write(to: executable)
+        XCTAssertThrowsError(try cli.run(arguments: ["--print", "/usage"], home: home, limit: 1)) {
+            XCTAssertEqual($0 as? ClaudeQuotaError, .processFailed(7))
+        }
+        try Data("#!/bin/sh\nprintf '{\"loggedIn\":false}'\nexit 1\n".utf8).write(to: executable)
+        XCTAssertThrowsError(try cli.authentication(home: home)) {
+            XCTAssertEqual($0 as? ClaudeQuotaError, .loginRequired)
+        }
+        try Data("#!/bin/sh\nprintf '{}'\n".utf8).write(to: executable)
+        XCTAssertEqual(try cli.run(arguments: [], home: home, limit: 1), Data("{}".utf8))
+    }
+
     /// 유료 구독 추가 시 API 인증·미확인 구독의 무조건 허용 방지
     func testPaidSubscriptionEligibility() throws {
         for plan in ["pro", "max", "ultra", "ULTRA", "unknown"] {

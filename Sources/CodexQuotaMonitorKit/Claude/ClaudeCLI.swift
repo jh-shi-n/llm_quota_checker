@@ -9,9 +9,11 @@ import Foundation
 /// 인증정보 원문을 포함하지 않는 CLI 실패 구분
 public enum ClaudeQuotaError: Error, LocalizedError, Equatable {
     case cliMissing, loginRequired, unsupportedAccount, timeout, invalidData, settingsChanged, rateLimited, liveQueryFailed, staleUsage, telemetryConflict, telemetryUnavailable
+    case processFailed(Int32)
 
     public var errorDescription: String? {
         switch self {
+        case .processFailed: return "Claude - CLI command failed"
         case .telemetryUnavailable: return "Claude - Token collector failed to start"
         case .telemetryConflict: return "Claude - OpenTelemetry settings conflict"
         case .rateLimited: return "Claude - Usage query rate limited"
@@ -130,10 +132,19 @@ public struct ClaudeCLI: Sendable {
             while process.isRunning && Date() < grace { Thread.sleep(forTimeInterval: 0.01) }
             if process.isRunning { kill(process.processIdentifier, SIGKILL) }
             process.waitUntilExit()
+            if Task.isCancelled { throw CancellationError() }
             throw ClaudeQuotaError.timeout
         }
+        try Task.checkCancellation()
         let size = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? NSNumber
         guard (size?.intValue ?? 0) <= 1_048_576 else { throw ClaudeQuotaError.invalidData }
-        return try Data(contentsOf: output)
+        let data = try Data(contentsOf: output)
+        guard process.terminationReason == .exit, process.terminationStatus == 0 else {
+            if arguments.starts(with: ["auth", "status"]),
+               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               object["loggedIn"] as? Bool == false { throw ClaudeQuotaError.loginRequired }
+            throw ClaudeQuotaError.processFailed(process.terminationStatus)
+        }
+        return data
     }
 }
