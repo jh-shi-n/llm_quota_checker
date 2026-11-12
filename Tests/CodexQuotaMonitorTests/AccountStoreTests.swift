@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class AccountStoreTests: XCTestCase {
+    /// 통신 실패·미확인 응답을 통한 차단 해제 오인 방지 및 명시적 해제 검증
+    func testServerRestrictionSurvivesTransientAndUnknownResponses() async {
+        var blocked = AccountState(id: "C1", email: "quota@example.test", status: .error)
+        blocked.codexUsageAccess = CodexUsageAccess(ordinaryUsageAllowed: false)
+        let unknown = AccountState(id: "C1", email: "quota@example.test", primaryUsedPercent: 0, status: .normal)
+        var allowed = unknown
+        allowed.codexUsageAccess = CodexUsageAccess(ordinaryUsageAllowed: true)
+        let loader = RestrictionSequenceLoader(states: [blocked, AccountState(id: "C1", status: .timeout), unknown, allowed])
+        let store = AccountStore(configs: [makeConfigs()[0]]) { _ in await loader.next() }
+        for _ in 0..<3 {
+            _ = await store.refresh(accountID: "C1", forceFresh: true)
+            XCTAssertEqual(store.state(for: "C1")?.codexUsageAccess?.isBlocked, true)
+            XCTAssertEqual(store.state(for: "C1")?.status, .error)
+        }
+        _ = await store.refresh(accountID: "C1", forceFresh: true)
+        XCTAssertEqual(store.state(for: "C1")?.codexUsageAccess?.isBlocked, false)
+        XCTAssertEqual(store.state(for: "C1")?.status, .normal)
+    }
+
     /// 강제 조회로 교체된 이전 detached 조회까지 종료 시 취소 검증
     func testShutdownCancelsBothOverlappingForcedFetches() async {
         let gate = AccountLoaderProbe()
@@ -706,6 +725,15 @@ private actor CallCounter {
         counts[id] = count
         return count
     }
+}
+
+/// 동일 경로의 서버 제한·통신 실패·복구 순서를 주입하는 로더
+private actor RestrictionSequenceLoader {
+    private var states: [AccountState]
+    /// 검증할 응답 순서의 보관
+    init(states: [AccountState]) { self.states = states }
+    /// 다음 서버 관측값 반환
+    func next() -> AccountState { states.removeFirst() }
 }
 
 private actor ReturnedStateLoader {

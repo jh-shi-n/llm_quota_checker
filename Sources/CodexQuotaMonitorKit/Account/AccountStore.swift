@@ -580,7 +580,18 @@ public final class AccountStore: ObservableObject {
                 )
             }
             state.provider = config.provider
-            if Self.shouldPreservePreviousSnapshot(for: state.status) {
+            if state.provider == .codex, state.codexUsageAccess != nil || previous?.codexUsageAccess != nil {
+                let sameAccount = state.email == nil || state.acceptsIdentity(of: previous ?? state)
+                state.codexUsageAccess = (state.codexUsageAccess ?? CodexUsageAccess())
+                    .merging(previous: sameAccount ? previous?.codexUsageAccess : nil)
+                if state.codexUsageAccess?.isBlocked == true {
+                    state.email = state.email ?? previous?.email
+                    state.planType = state.planType ?? previous?.planType
+                    state.status = .error
+                    state.errorMessage = state.codexUsageAccess?.message
+                }
+            }
+            if Self.shouldPreservePreviousSnapshot(for: state.status), state.codexUsageAccess?.isBlocked != true {
                 if state.provider == .claude {
                     state = Self.mergedClaudeFailure(state, previous: previous)
                 } else {

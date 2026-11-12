@@ -46,6 +46,8 @@ extension CodexQuotaServiceError: LocalizedError {
 /// A quota snapshot containing the rolling five-hour primary quota and the
 /// overall secondary quota when the server supplies it.
 public struct CodexQuota: Equatable, Sendable {
+    public var usageAccess: CodexUsageAccess?
+    var hasQuotaWindows = true
     public let resetCredits: RateLimitResetCredits?
     public let email: String?
     public let planType: String?
@@ -343,11 +345,11 @@ public struct CodexQuotaService: Sendable {
         switch result {
         case let .success(quota):
             let primaryIsOverall = quota.primaryWindowIsOverall
-            return AccountState(
+            var state = AccountState(
                 id: config.id,
                 email: quota.email,
                 planType: quota.planType,
-                primaryUsedPercent: primaryIsOverall ? nil : quota.primaryUsedPercent,
+                primaryUsedPercent: primaryIsOverall || !quota.hasQuotaWindows ? nil : quota.primaryUsedPercent,
                 secondaryUsedPercent: primaryIsOverall
                     ? quota.secondaryUsedPercent ?? quota.primaryUsedPercent
                     : quota.secondaryUsedPercent,
@@ -357,8 +359,11 @@ public struct CodexQuotaService: Sendable {
                     : quota.secondaryResetAt,
                 resetCredits: quota.resetCredits,
                 lastUpdated: Date(),
-                status: .normal
+                status: quota.usageAccess?.isBlocked == true ? .error : .normal,
+                errorMessage: quota.usageAccess?.message
             )
+            state.codexUsageAccess = quota.usageAccess
+            return state
         case let .failure(error):
             if error == .notConfigured {
                 return AccountState.notConfigured(id: config.id)
@@ -423,6 +428,8 @@ public struct CodexQuotaService: Sendable {
         }
         let limits = result["rateLimits"]?.objectValue ?? [:]
         let limitsByID = result["rateLimitsByLimitId"]?.objectValue
+        let accessLimits = limits.isEmpty ? limitsByID?["codex"]?.objectValue ?? [:] : limits
+        let access = CodexUsageAccess.parse(result: result, limits: accessLimits)
         let candidates = [
             classifyLimit(
                 key: "primary",
@@ -437,10 +444,17 @@ public struct CodexQuotaService: Sendable {
         let secondary = selectLimit(candidates, window: .overall)
         guard let selected = primary ?? secondary,
               let selectedUsedPercent = finiteUsedPercent(in: selected.values) else {
+            if access.isBlocked {
+                var blocked = CodexQuota(email: email, planType: planType, primaryUsedPercent: 0,
+                    resetCredits: RateLimitResetCredits.parse(result["rateLimitResetCredits"]))
+                blocked.hasQuotaWindows = false
+                blocked.usageAccess = access
+                return blocked
+            }
             throw CodexQuotaServiceError.malformedResponse("Missing rateLimits.primary.usedPercent")
         }
 
-        return CodexQuota(
+        var quota = CodexQuota(
             email: email,
             planType: planType,
             primaryUsedPercent: selectedUsedPercent,
@@ -450,6 +464,8 @@ public struct CodexQuotaService: Sendable {
             secondaryResetAt: secondary.flatMap { resetDate(in: $0.values) },
             resetCredits: RateLimitResetCredits.parse(result["rateLimitResetCredits"])
         )
+        quota.usageAccess = access
+        return quota
     }
 
     private enum QuotaWindow: Equatable {

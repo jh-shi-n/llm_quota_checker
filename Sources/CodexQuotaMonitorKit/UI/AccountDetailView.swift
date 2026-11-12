@@ -293,6 +293,7 @@ public struct AccountDetailView: View {
 
     /// 계정 조회 상태의 상세 화면 표시명 변환
     public static func statusText(for account: AccountState) -> String {
+        if account.codexUsageAccess?.isBlocked == true { return "사용 제한" }
         if account.provider == .claude {
             if account.status == .codexNotFound { return "Claude Cli를 찾을 수 없습니다." }
             if account.status == .normal && account.lastUpdated == nil { return "사용량 대기" }
