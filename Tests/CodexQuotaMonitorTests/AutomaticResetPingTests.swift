@@ -8,6 +8,68 @@ import XCTest
 /// 주입한 시계·네트워크·대기로 자동 전송 정책 검증
 @MainActor
 final class AutomaticResetPingTests: XCTestCase {
+    /// 주간 전용 Business의 11%→100% 회복 감지와 중복 전송 방지 검증
+    func testWeeklyOnlyBusinessRecoveryFromElevenPercentSendsOnce() async {
+        let h = AutomaticPingHarness()
+        h.before.planType = "self_serve_business_prolite"
+        h.before.primaryUsedPercent = nil
+        h.before.primaryResetAt = nil
+        h.before.secondaryWindowMinutes = 10080
+        h.before.secondaryUsedPercent = 89
+        h.before.secondaryResetAt = h.clock.addingTimeInterval(-1)
+        h.after = h.before
+        h.after.secondaryUsedPercent = 0
+        h.after.secondaryResetAt = h.clock.addingTimeInterval(604_800)
+        h.after.secondaryResetObservation = .checking
+        h.after.lastUpdated = h.clock
+        h.trigger()
+        await h.coordinator.waitForPendingOperations()
+        h.coordinator.reconcile(states: [h.after], enabled: true)
+        await h.coordinator.waitForPendingOperations()
+        XCTAssertEqual(h.probes, 1)
+        XCTAssertEqual(h.refreshes, 1)
+        XCTAssertTrue(h.alerts.isEmpty)
+    }
+
+    /// 주간 단독 회복 시 초기화 이후 잔량으로 판단하고 5시간 잔량 조건 유지 검증
+    func testWeeklyRecoveryUsesPostResetQuotaForDualWindowAccount() async {
+        for primaryUsed in [50.0, 100.0] {
+            let h = AutomaticPingHarness()
+            h.before.primaryResetAt = h.clock.addingTimeInterval(1_000)
+            h.before.primaryUsedPercent = primaryUsed
+            h.before.secondaryUsedPercent = 89
+            h.before.secondaryResetAt = h.clock.addingTimeInterval(-1)
+            h.after = h.before
+            h.after.secondaryUsedPercent = 0
+            h.after.secondaryResetAt = h.clock.addingTimeInterval(604_800)
+            h.after.secondaryResetObservation = .checking
+            h.after.lastUpdated = h.clock
+            h.trigger()
+            await h.coordinator.waitForPendingOperations()
+            XCTAssertEqual(h.probes, primaryUsed < 100 ? 1 : 0)
+            XCTAssertTrue(h.alerts.isEmpty)
+        }
+    }
+
+    /// 주간 전용의 잔량 경계와 5시간 정보 누락·불완전 구간의 전송 차단 검증
+    func testWeeklyOnlyEligibilityRequiresExplicitWindowAndAvailableQuota() {
+        let h = AutomaticPingHarness()
+        var state = h.after
+        state.primaryUsedPercent = nil
+        state.primaryResetAt = nil
+        XCTAssertFalse(AutomaticResetPingCoordinator.canSend(state))
+        state.secondaryWindowMinutes = 10080
+        for remaining: Double? in [nil, 0, 10, 10.001, 100] {
+            state.secondaryRemainingPercent = remaining
+            XCTAssertEqual(AutomaticResetPingCoordinator.canSend(state), remaining.map { $0 > 10 } ?? false)
+        }
+        state.primaryWindowMinutes = 300
+        XCTAssertFalse(AutomaticResetPingCoordinator.canSend(state))
+        state.primaryWindowMinutes = nil
+        state.primaryResetAt = h.clock.addingTimeInterval(1_000)
+        XCTAssertFalse(AutomaticResetPingCoordinator.canSend(state))
+    }
+
     /// 이미 고정 관측된 새 구간에서는 추가 Ping 소비 생략 검증
     func testStableResetAtPreflightSkipsSending() async {
         let h = AutomaticPingHarness()
