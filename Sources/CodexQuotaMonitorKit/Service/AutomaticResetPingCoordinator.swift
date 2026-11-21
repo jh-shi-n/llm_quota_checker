@@ -123,10 +123,13 @@ public final class AutomaticResetPingCoordinator {
         for operation in Array(operations.values) { await operation.task.value }
     }
 
-    /// 주간 10% 초과·5시간 잔량 존재·정상 조회만 자동 전송 허용
+    /// 주간 10% 초과·정상 조회 필수, 서버의 명시적 주간 전용 구간에 한해 5시간 검사 제외
     static func canSend(_ state: AccountState) -> Bool {
-        state.supportsStandardQuotaWindows && state.status == .normal && state.secondaryRemainingPercent.map { $0 > 10 } == true
-            && state.primaryRemainingPercent.map { $0 > 0 } == true
+        guard state.supportsStandardQuotaWindows, state.status == .normal,
+              state.secondaryRemainingPercent.map({ $0 > 10 }) == true else { return false }
+        if let remaining = state.primaryRemainingPercent { return remaining > 0 }
+        return state.secondaryWindowMinutes == 10080
+            && state.primaryWindowMinutes == nil && state.primaryResetAt == nil
     }
 
     /// 최초 전송 후 5·15·30초 간격 최대 3회 재시도; Ping 성공 후에는 조회만 재시도

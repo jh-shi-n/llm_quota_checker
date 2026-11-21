@@ -72,7 +72,7 @@ public struct UsageWindowProbeSection: View {
                     Toggle("자동 전송", isOn: automaticResetPingEnabled)
                         .toggleStyle(.checkbox)
                         .fixedSize()
-                        .help("모든 계정에 공통 적용됩니다. 초기화 후 최소 Ping으로 실제 할당량을 사용하며, 주간 잔량 10% 이하·미확인 또는 5시간 잔량 소진 시 생략합니다.")
+                        .help("모든 Codex 계정에 공통 적용됩니다. 초기화 후 최소 Ping으로 실제 할당량을 사용하며, 주간 잔량 10% 이하·미확인 또는 5시간 잔량 소진·미확인 시 생략합니다. 서버에서 주간 전용 한도로 확인된 계정은 5시간 잔량 검사를 생략합니다.")
                         .accessibilityIdentifier("automatic-reset-ping-toggle")
                         .accessibilityLabel("할당량 초기화 시 자동 전송")
                 }
